@@ -17,12 +17,32 @@ const serviceIndex = {
   delivery: 0
 };
 
-function getNextServer(serviceName) {
+// Get the next server with failover logic
+async function getNextAvailableServer(serviceName) {
   const servers = services[serviceName];
-  const index = serviceIndex[serviceName];
-  const nextServer = servers[index];
-  serviceIndex[serviceName] = (index + 1) % servers.length; // Update index for next request
-  return nextServer;
+  const totalServers = servers.length;
+
+  for (let i = 0; i < totalServers; i++) {
+    const index = serviceIndex[serviceName];
+    const targetServer = servers[index];
+
+    // Update the index for the next request
+    serviceIndex[serviceName] = (index + 1) % totalServers;
+
+    // Check if the server is available
+    try {
+      const healthCheckUrl = `${targetServer}/health`; // Define a health check endpoint on each service
+      const response = await fetch(healthCheckUrl);
+      if (response.ok) {
+        return targetServer; // Return the first available server
+      }
+    } catch (error) {
+      console.warn(`Server ${targetServer} is unavailable. Trying the next one...`);
+    }
+  }
+
+  // If no servers are available, return null
+  return null;
 }
 
 const app = express();
@@ -36,7 +56,11 @@ app.use('/:service/:path?', async (req, res) => {
     return res.status(404).send({ error: 'Service not found' });
   }
 
-  const targetServer = getNextServer(serviceName);
+  const targetServer = await getNextAvailableServer(serviceName);
+
+  if (!targetServer) {
+    return res.status(500).send({ error: 'All servers are down' });
+  }
 
   let targetPath = req.originalUrl;
   if (targetPath.endsWith('/') && targetPath.length > 1) {
